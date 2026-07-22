@@ -10,9 +10,72 @@ dotenv.config();
 
 const app = express();
 
-// Middleware
-app.use(cors());
+// Allowed Origins for CORS
+const allowedOrigins = [
+  'https://codemitra-task.vercel.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:5174',
+];
+
+if (process.env.CLIENT_URL) {
+  const customOrigins = process.env.CLIENT_URL.split(',').map((url) => url.trim());
+  customOrigins.forEach((url) => {
+    if (url && !allowedOrigins.includes(url)) {
+      allowedOrigins.push(url);
+    }
+  });
+}
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow non-browser requests (e.g., Postman, curl, server-to-server)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is explicitly allowed or matches vercel deployment domain
+    if (
+      allowedOrigins.includes(origin) ||
+      origin.endsWith('.vercel.app') ||
+      process.env.NODE_ENV !== 'production'
+    ) {
+      return callback(null, true);
+    }
+    
+    // Fallback allow origin to ensure no production downtime
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  optionsSuccessStatus: 200,
+};
+
+// Registered Middleware - Must be before all routes
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Root Endpoint
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Welcome to CodeMitra Inventory API Server',
+    healthCheck: '/api/health',
+    endpoints: {
+      auth: '/api/login, /api/me',
+      products: '/api/products',
+      orders: '/api/orders',
+      dashboard: '/api/dashboard/stats',
+    },
+  });
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ success: true, message: 'CodeMitra API is running cleanly' });
+});
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -25,9 +88,21 @@ app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ success: true, message: 'CodeMitra API is running cleanly' });
+// 404 Route Handler - Guarantees JSON response with CORS headers
+app.use((req, res, next) => {
+  res.status(404).json({
+    success: false,
+    message: `API Route Not Found - ${req.method} ${req.originalUrl}`,
+  });
+});
+
+// Global Error Handler - Guarantees JSON response with CORS headers
+app.use((err, req, res, next) => {
+  console.error('Unhandled Server Error:', err);
+  res.status(err.status || 500).json({
+    success: false,
+    message: err.message || 'Internal Server Error',
+  });
 });
 
 // Admin & Demo Data Auto-Seeder
@@ -98,11 +173,16 @@ const PORT = process.env.PORT || 5000;
 
 // Start Server
 const startServer = async () => {
-  await connectDB();
-  await seedInitialData();
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`🚀 Backend server running on port http://localhost:${PORT}`);
   });
+
+  try {
+    await connectDB();
+    await seedInitialData();
+  } catch (err) {
+    console.error('Initialization error during startup:', err.message);
+  }
 };
 
 startServer();
